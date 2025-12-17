@@ -12,7 +12,7 @@
     "website": "https://github.com/OCA/l10n-croatia",
     "license": "AGPL-3",
     "depends": [
-        "base_iban",
+        "base_bank_from_iban"
     ],
     "data": [
         "data/res_bank_data.xml",
