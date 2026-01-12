@@ -1,6 +1,8 @@
 from odoo import _, api, fields, models
 from odoo.exceptions import ValidationError
 
+from odoo.odoo.tools.safe_eval import assert_no_dunder_name
+
 
 class AccountMove(models.Model):
     _inherit = "account.move"
@@ -23,6 +25,9 @@ class AccountMove(models.Model):
             "Leave blank for current date",
         )
     )
+    l10n_hr_period_delivery_start = fields.Date()
+    l10n_hr_period_delivery_end = fields.Date()
+
     l10n_hr_vrijeme_izdavanja = fields.Char(
         # DB: namjerno kao char da izbjegnem timezone problem!
         string="Time of invoicing",
@@ -165,7 +170,9 @@ class AccountMove(models.Model):
             res.append(_("PoS device selected is not active"))
         return res
 
-    def _l10n_hr_post_out_invoice(self):
+    def _l10n_hr_pre_post_data(self):
+        # moved populating data before calling super,
+        # so no errors appear later in edi modules
         self.ensure_one()
         l10n_hr_errors = self._l10n_hr_post_check()
         if l10n_hr_errors:
@@ -173,9 +180,12 @@ class AccountMove(models.Model):
             raise ValidationError(msg)
         # set date fields
         if not self.l10n_hr_date_document:
-            self.l10n_hr_date_document = fields.Date.today()
+            self.l10n_hr_date_document = self.invoice_date or fields.Date.today()
         if not self.l10n_hr_date_delivery:
-            self.l10n_hr_date_delivery = fields.Date.today()
+            if self.l10n_hr_period_delivery_start and self.l10n_hr_period_delivery_end:
+                self.l10n_hr_date_delivery = self.l10n_hr_period_delivery_end
+            else:
+                self.l10n_hr_date_delivery = self.invoice_date or fields.Date.today()
         if not self.date:
             self.date = fields.Date.today()
         if not self.l10n_hr_vrijeme_izdavanja:  # depend na l10n_hr_base?
@@ -187,6 +197,10 @@ class AccountMove(models.Model):
             self.invoice_user_id = self.env.user
         if not self.l10n_hr_fiskalni_broj:
             self.l10n_hr_fiskalni_broj = self._gen_fiskal_number()
+
+
+    def _l10n_hr_post_out_invoice(self):
+
         # now and set lock on journals,
         # after first posting journal is locked for changes
         if not self.l10n_hr_fiskal_uredjaj_id.lock:
@@ -194,13 +208,36 @@ class AccountMove(models.Model):
             if not self.l10n_hr_fiskal_uredjaj_id.prostor_id.lock:
                 self.l10n_hr_fiskal_uredjaj_id.prostor_id.lock = True
 
+    def _l10n_hr_check_is_out_invoice(self):
+        self.ensure_one()
+        return (
+            self.company_id.account_fiscal_country_id.code == "HR" and
+            self.is_invoice(include_receipts=False) and
+            self.move_type in ("out_invoice", "out_refund")
+        )
+
     def _post(self, soft=True):
+        for move in self:
+            if move._l10n_hr_check_is_out_invoice():
+                move._l10n_hr_pre_post_data()
         posted = super()._post(soft=soft)
         for move in posted:
-            if move.company_id.account_fiscal_country_id.code != "HR":
-                continue  # only for croatia
-            if not move.is_invoice(include_receipts=False):
-                continue  # only invoices
-            if move.move_type in ("out_invoice", "out_refund"):
+            if move._l10n_hr_check_is_out_invoice():
                 move._l10n_hr_post_out_invoice()
         return posted
+
+    @api.onchange('partner_id')
+    def _onchange_partner_id(self):
+        res = super(AccountMove, self)._onchange_partner_id()
+        if self.partner_id and self.is_outbound(include_receipts=True):
+            self.journal_id = self.partner_id.l10n_hr_purchase_journal_id
+        elif self.partner_id and self.is_inbound(include_receipts=True):
+            self.journal_id = self.partner_id.l10n_hr_sale_journal_id
+        return res
+
+    @api.onchange('journal_id')
+    def _onchange_journal_id(self):
+        res = super()._onchange_journal_id()
+        if self.journal_id.l10n_hr_default_nacin_placanja:
+            self.l10n_hr_nacin_placanja = self.journal_id.l10n_hr_default_nacin_placanja
+        return res

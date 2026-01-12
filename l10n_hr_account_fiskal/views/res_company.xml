@@ -12,6 +12,13 @@
                 <field name="l10n_hr_fiskal_cert_id" />
                 <field name="l10n_hr_fiskal_spec" />
                 <field name="l10n_hr_fiskal_taxative" />
+<!--                    <button-->
+<!--                        string="Test Fiscalisation connection"-->
+<!--                        type="object"-->
+<!--                        name="button_test_echo"-->
+<!--                        attrs="{'invisible':[('l10n_hr_fiskal_cert_id','=',False)]}"-->
+<!--                    />-->
+
             </field>
         </field>
     </record>
